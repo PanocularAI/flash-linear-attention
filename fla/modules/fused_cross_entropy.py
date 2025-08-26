@@ -20,7 +20,7 @@ from fla.utils import input_guard
 try:
     if "all_gather_into_tensor" not in dir(torch.distributed):
         torch.distributed.all_gather_into_tensor = torch.distributed._all_gather_base
-except ImportError:
+except AttributeError:
     pass
 
 @triton.heuristics({
