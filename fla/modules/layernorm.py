@@ -20,10 +20,14 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 from einops import rearrange
-from torch.distributed import DeviceMesh
-from torch.distributed.tensor import Replicate, Shard, distribute_module
-from torch.distributed.tensor.parallel import ParallelStyle
-
+try:
+    from torch.distributed import DeviceMesh
+    from torch.distributed.tensor import Replicate, Shard, distribute_module
+    from torch.distributed.tensor.parallel import ParallelStyle
+    ENABLE_DISTRIBUTED=True
+except ImportError:
+   ENABLE_DISTRIBUTED=False
+    
 from fla.utils import get_multiprocessor_count, input_guard
 
 try:
@@ -1380,54 +1384,54 @@ class RMSNormLinear(nn.Module):
             is_rms_norm=True
         )
 
+if ENABLE_DISTRIBUTED:
+    class NormParallel(ParallelStyle):
 
-class NormParallel(ParallelStyle):
+        def __init__(self, *, sequence_dim: int = 1, use_local_output: bool = False):
+            super().__init__()
+            self.sequence_sharding = (Shard(sequence_dim),)
+            self.use_local_output = use_local_output
 
-    def __init__(self, *, sequence_dim: int = 1, use_local_output: bool = False):
-        super().__init__()
-        self.sequence_sharding = (Shard(sequence_dim),)
-        self.use_local_output = use_local_output
-
-    def _replicate_module_fn(
-        self, name: str, module: nn.Module, device_mesh: DeviceMesh
-    ):
-        for p_name, param in module.named_parameters():
-            # simple replication with fixed ones_ init from LayerNorm/RMSNorm, which allow
-            # us to simply just use from_local
-            replicated_param = torch.nn.Parameter(
-                DTensor.from_local(param, device_mesh, [Replicate()], run_check=False)
-            )
-            module.register_parameter(p_name, replicated_param)
-
-    @staticmethod
-    def _prepare_input_fn(sequence_sharding, mod, inputs, device_mesh):
-        input_tensor = inputs[0]
-        if isinstance(input_tensor, DTensor):
-            # if the passed in input DTensor is not sharded on the sequence dim, we need to redistribute it
-            if input_tensor.placements != sequence_sharding:
-                input_tensor = input_tensor.redistribute(
-                    placements=sequence_sharding, async_op=True
+        def _replicate_module_fn(
+            self, name: str, module: nn.Module, device_mesh: DeviceMesh
+        ):
+            for p_name, param in module.named_parameters():
+                # simple replication with fixed ones_ init from LayerNorm/RMSNorm, which allow
+                # us to simply just use from_local
+                replicated_param = torch.nn.Parameter(
+                    DTensor.from_local(param, device_mesh, [Replicate()], run_check=False)
                 )
-            return input_tensor
-        elif isinstance(input_tensor, torch.Tensor):
-            # assume the input passed in already sharded on the sequence dim and create the DTensor
-            return DTensor.from_local(
-                input_tensor, device_mesh, sequence_sharding, run_check=False
-            )
-        else:
-            raise ValueError(
-                f"expecting input of {mod} to be a torch.Tensor or DTensor, but got {input_tensor}"
-            )
+                module.register_parameter(p_name, replicated_param)
 
-    @staticmethod
-    def _prepare_output_fn(use_local_output, mod, outputs, device_mesh):
-        return outputs.to_local() if use_local_output else outputs
+        @staticmethod
+        def _prepare_input_fn(sequence_sharding, mod, inputs, device_mesh):
+            input_tensor = inputs[0]
+            if isinstance(input_tensor, DTensor):
+                # if the passed in input DTensor is not sharded on the sequence dim, we need to redistribute it
+                if input_tensor.placements != sequence_sharding:
+                    input_tensor = input_tensor.redistribute(
+                        placements=sequence_sharding, async_op=True
+                    )
+                return input_tensor
+            elif isinstance(input_tensor, torch.Tensor):
+                # assume the input passed in already sharded on the sequence dim and create the DTensor
+                return DTensor.from_local(
+                    input_tensor, device_mesh, sequence_sharding, run_check=False
+                )
+            else:
+                raise ValueError(
+                    f"expecting input of {mod} to be a torch.Tensor or DTensor, but got {input_tensor}"
+                )
 
-    def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
-        return distribute_module(
-            module,
-            device_mesh,
-            self._replicate_module_fn,
-            partial(self._prepare_input_fn, self.sequence_sharding),
-            partial(self._prepare_output_fn, self.use_local_output),
-        )
+        @staticmethod
+        def _prepare_output_fn(use_local_output, mod, outputs, device_mesh):
+            return outputs.to_local() if use_local_output else outputs
+
+        def _apply(self, module: nn.Module, device_mesh: DeviceMesh) -> nn.Module:
+            return distribute_module(
+                module,
+                device_mesh,
+                self._replicate_module_fn,
+                partial(self._prepare_input_fn, self.sequence_sharding),
+                partial(self._prepare_output_fn, self.use_local_output),
+            )
