@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
-
-from typing import Optional, Tuple
 
 import torch
 import triton
@@ -9,9 +6,9 @@ import triton.language as tl
 
 from fla.ops.utils import prepare_chunk_indices, prepare_chunk_offsets
 from fla.ops.utils.op import exp
-from fla.utils import check_shared_mem, is_amd, use_cuda_graph
+from fla.utils import IS_AMD, USE_CUDA_GRAPH, autotune_cache_kwargs, check_shared_mem
 
-NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if is_amd else [2, 4, 8, 16, 32]
+NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if IS_AMD else [2, 4, 8, 16, 32]
 
 
 @triton.heuristics({
@@ -26,7 +23,8 @@ NUM_WARPS_AUTOTUNE = [2, 4, 8, 16] if is_amd else [2, 4, 8, 16, 32]
         for num_stages in [2, 3, 4]
     ],
     key=['BT', 'BK', 'BV', "V"],
-    use_cuda_graph=use_cuda_graph,
+    use_cuda_graph=USE_CUDA_GRAPH,
+    **autotune_cache_kwargs,
 )
 @triton.jit(do_not_specialize=['T'])
 def chunk_dplr_bwd_kernel_dhu(
@@ -113,14 +111,15 @@ def chunk_dplr_bwd_dhu(
     w: torch.Tensor,
     gk: torch.Tensor,
     h0: torch.Tensor,
-    dht: Optional[torch.Tensor],
+    dht: torch.Tensor | None,
     do: torch.Tensor,
     dv: torch.Tensor,
-    cu_seqlens: Optional[torch.LongTensor] = None,
-    chunk_size: int = 64
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    cu_seqlens: torch.LongTensor | None = None,
+    chunk_size: int = 64,
+    chunk_indices: torch.LongTensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     B, T, H, K, V = *qg.shape, do.shape[-1]
-    BT = min(chunk_size, max(triton.next_power_of_2(T), 16))
+    BT = chunk_size
     BK = max(triton.next_power_of_2(K), 16)
     assert BK <= 256, "current kernel does not support head dimension being larger than 256."
     # H100
@@ -134,7 +133,8 @@ def chunk_dplr_bwd_dhu(
         BV = 16
         BC = 16
 
-    chunk_indices = prepare_chunk_indices(cu_seqlens, BT) if cu_seqlens is not None else None
+    if chunk_indices is None:
+        chunk_indices = prepare_chunk_indices(cu_seqlens, BT) if cu_seqlens is not None else None
     # N: the actual number of sequences in the batch with either equal or variable lengths
     if cu_seqlens is None:
         N, NT, chunk_offsets = B, triton.cdiv(T, BT), None

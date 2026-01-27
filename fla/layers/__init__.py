@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2023-2025, Songlin Yang, Yu Zhang
 
 from .abc import ABCAttention
@@ -7,6 +6,7 @@ from .based import BasedLinearAttention
 from .bitattn import BitAttention
 from .comba import Comba
 from .delta_net import DeltaNet
+from .deltaformer import DeltaFormerAttention
 from .forgetting_attn import ForgettingAttention
 from .gated_deltanet import GatedDeltaNet
 from .gated_deltaproduct import GatedDeltaProduct
@@ -14,8 +14,10 @@ from .gla import GatedLinearAttention
 from .gsa import GatedSlotAttention
 from .hgrn import HGRNAttention
 from .hgrn2 import HGRN2Attention
+from .kda import KimiDeltaAttention
 from .lightnet import LightNetAttention
 from .linear_attn import LinearAttention
+from .log_linear_mamba2 import LogLinearMamba2
 from .mamba import Mamba
 from .mamba2 import Mamba2
 from .mesa_net import MesaNet
@@ -43,8 +45,10 @@ __all__ = [
     'GatedSlotAttention',
     'HGRNAttention',
     'HGRN2Attention',
+    'KimiDeltaAttention',
     'LightNetAttention',
     'LinearAttention',
+    'LogLinearMamba2',
     'Mamba',
     'Mamba2',
     'MesaNet',
@@ -58,4 +62,5 @@ __all__ = [
     'RWKV6Attention',
     'RWKV7Attention',
     'SlidingWindowSharedKeyAttention',
+    'DeltaFormerAttention',
 ]
