@@ -2,17 +2,17 @@ import ast
 import os
 import sys
 from collections import defaultdict
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 
 DEBUG_MODE = os.environ.get("DEBUG_MODE", "False").lower() in ("true", "1", "yes")
 DEBUG_TEST_FILE = os.environ.get("DEBUG_TEST_FILE", "NULL").lower()
 
 
-@lru_cache(maxsize=None)
+@cache
 def parse_file(file_path):
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return ast.parse(f.read(), filename=file_path)
     except (SyntaxError, FileNotFoundError, UnicodeDecodeError):
         return None
@@ -183,6 +183,9 @@ class DependencyFinder:
             if changed_file in self.all_test_files:
                 dependent_tests.add(str(changed_file))
 
+        # Filter out test files containing 'mamba'
+        dependent_tests = {test for test in dependent_tests if 'mamba' not in os.path.basename(test)}
+
         return dependent_tests
 
 
@@ -194,7 +197,8 @@ if __name__ == "__main__":
     all_args_string = " ".join(sys.argv[1:])
     changed_files = all_args_string.split()
 
-    BLACKLIST = ['fla/utils.py', 'utils/convert_from_llama.py', 'utils/convert_from_rwkv6.py', 'utils/convert_from_rwkv7.py']
+    BLACKLIST = ['fla/utils.py', 'utils/convert_from_llama.py', 'utils/convert_from_rwkv6.py',
+                 'utils/convert_from_rwkv7.py', 'tests/conftest.py']
     changed_files = [file for file in changed_files if not any(file.endswith(b) for b in BLACKLIST)]
 
     changed_files = [file for file in changed_files if file.endswith('.py')]
